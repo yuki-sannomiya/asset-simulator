@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>プレイヤー画面</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    .base-return { font-weight: bold; }
+    .bet-input { width: 80px; }
+    #betStatus { font-weight: bold; margin-top: 10px; }
+    .bet-confirmed { color: green; }
+    .bet-warning { color: red; }
+    .player-list { margin-top: 30px; }
+    .connection-status { margin: 10px 0; padding: 10px; border-radius: 5px; }
+    .connected { background: #e6f3ff; color: #0066cc; }
+    .disconnected { background: #ffe6e6; color: #cc0000; }
+    .event-notification { 
+      background: #fff3cd; 
+      border: 1px solid #ffeaa7; 
+      padding: 10px; 
+      margin: 10px 0; 
+      border-radius: 5px;
+      display: none;
+    }
+    .funds-display { 
+      background: #f8f9fa; 
+      padding: 15px; 
+      margin: 15px 0; 
+      border-radius: 5px; 
+      text-align: center; 
+      font-size: 1.2em;
+    }
+    .return-changed { 
+      background: #ffffcc !important; 
+      animation: highlight 2s ease-out;
+    }
+    @keyframes highlight {
+      0% { background: #ffff99 !important; }
+      100% { background: #ffffcc !important; }
+    }
+  </style>
+</head>
+<body>
+  <h2>プレイヤー画面 - 資産シミュレーター</h2>
+
+  <div class="connection-status disconnected" id="connectionStatus">
+    未接続 - ルームに参加してください
+  </div>
+
+  <div class="event-notification" id="eventNotification">
+    <strong>📈 イベント発生！</strong>
+    <span id="eventText"></span>
+  </div>
+
+  <div style="margin: 15px 0; padding: 10px; background: #e8f5e8; border-radius: 5px; font-size: 0.9em;">
+    💡 <strong>ヒント：</strong> 友達を招待するには、GMにQRコードかリンクを送ってもらってください！
+  </div>
+
+  <label>ルームID：<input type="text" id="roomIdInput" value="testroom"></label>
+  <label>プレイヤーID：<input type="text" id="playerIdInput" value="player1"></label>
+  <button onclick="joinRoom()">参加</button>
+
+  <div id="gameArea" style="display:none;">
+    <div class="funds-display">
+      所持金：<span id="currentFunds">100,000</span>円
+      <div style="font-size: 0.9em; color: #666; margin-top: 5px;">
+        <span id="fundsChange"></span>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>資産タイプ</th><th>利回り（%）</th><th>ベット額</th></tr>
+      </thead>
+      <tbody id="returnsTable">
+        <tr><td>定期預金</td><td class="base-return">2.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>国債ファンド</td><td class="base-return">3.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>株式インデックス</td><td class="base-return">6.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>ハイテク株</td><td class="base-return">10.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>仮想通貨</td><td class="base-return">30.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>ベンチャー投資</td><td class="base-return">0.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+      </tbody>
+    </table>
+    
+    <div style="text-align: center; margin: 15px 0;">
+      <strong>合計ベット額：<span id="totalBet">0</span>円</strong>
+    </div>
+    
+    <button onclick="confirmBet()">ベット確定</button>
+    <p id="betStatus"></p>
+
+    <div class="player-list">
+      <h3>ルーム内のプレイヤー一覧</h3>
+      <ul id="playerList"></ul>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    let currentFunds = 100000;
+    let currentReturns = [2, 3, 6, 10, 30, 0];
+    let roomId = "";
+    let playerId = "";
+    let isConnected = false;
+    let playersData = {};
+    let myData = null;
+
+    const socket = io('http://localhost:3000');
+
+    window.addEventListener('DOMContentLoaded', function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomParam = urlParams.get('room');
+      if (roomParam) {
+        document.getElementById("roomIdInput").value = roomParam;
+        const randomId = 'player_' + Math.random().toString(36).substr(2, 6);
+        document.getElementById("playerIdInput").value = randomId;
+      }
+    });
+
+    function joinRoom() {
+      roomId = document.getElementById("roomIdInput").value;
+      playerId = document.getElementById("playerIdInput").value;
+      if (!roomId || !playerId) {
+        alert("ルームIDとプレイヤーIDを入力してください");
+        return;
+      }
+      socket.emit('join_room', { roomId, role: 'player', playerId });
+      isConnected = true;
+      document.getElementById("connectionStatus").textContent = `ルーム "${roomId}" に "${playerId}" として参加中`;
+      document.getElementById("connectionStatus").className = "connection-status connected";
+      document.getElementById("gameArea").style.display = "block";
+      sendPlayerUpdate();
+    }
+
+    socket.on('room_state', data => {
+      if (data.baseReturns) updateReturns(data.baseReturns);
+      if (data.players) {
+        playersData = data.players;
+        updatePlayerList();
+        updateMyFunds();
+      }
+    });
+
+    socket.on('player_list_update', players => {
+      playersData = players;
+      updatePlayerList();
+      updateMyFunds();
+    });
+
+    function updateReturns(newReturns) {
+      const cells = document.querySelectorAll(".base-return");
+      let hasChanged = false;
+      newReturns.forEach((val, i) => {
+        if (cells[i] && Math.abs(currentReturns[i] - val) > 0.01) {
+          cells[i].parentElement.classList.add('return-changed');
+          setTimeout(() => {
+            cells[i].parentElement.classList.remove('return-changed');
+          }, 2000);
+          hasChanged = true;
+        }
+        if (cells[i]) cells[i].textContent = val.toFixed(1);
+      });
+      if (hasChanged) showEventNotification("利回りが変更されました！");
+      currentReturns = [...newReturns];
+    }
+
+    function updatePlayerList() {
+      const list = document.getElementById("playerList");
+      list.innerHTML = "";
+      const entries = Object.entries(playersData || {});
+      if (entries.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "プレイヤーの参加を待っています...";
+        list.appendChild(li);
+        return;
+      }
+      entries.forEach(([id, data]) => {
+        const li = document.createElement("li");
+        const total = (data.investments || []).reduce((sum, v) => sum + v, 0);
+        const status = data.ready ? "✅ ベット済み" : "⏳ ベット待ち";
+        li.textContent = `${id}：${total.toLocaleString()}円 ${status}`;
+        list.appendChild(li);
+      });
+    }
+
+    function updateMyFunds() {
+      myData = playersData[playerId];
+      if (!myData) return;
+      if (myData.funds !== currentFunds) {
+        const oldFunds = currentFunds;
+        currentFunds = myData.funds;
+        document.getElementById("currentFunds").textContent = currentFunds.toLocaleString();
+        const changeAmount = currentFunds - oldFunds;
+        const changeEl = document.getElementById("fundsChange");
+        if (changeAmount > 0) {
+          changeEl.textContent = `+${changeAmount.toLocaleString()}円`;
+          changeEl.style.color = "#28a745";
+          showEventNotification(`💰 資産が増加しました！ ${oldFunds.toLocaleString()}円 → ${currentFunds.toLocaleString()}円`);
+        } else if (changeAmount < 0) {
+          changeEl.textContent = `${changeAmount.toLocaleString()}円`;
+          changeEl.style.color = "#dc3545";
+          showEventNotification(`📉 資産が減少しました。 ${oldFunds.toLocaleString()}円 → ${currentFunds.toLocaleString()}円`);
+        } else {
+          changeEl.textContent = "";
+        }
+        if (!myData.ready) {
+          resetBetInputs();
+          const status = document.getElementById("betStatus");
+          status.textContent = "新しい資産でベットできます";
+          status.className = "";
+        }
+      }
+    }
+
+    function resetBetInputs() {
+      const inputs = document.querySelectorAll(".bet-input");
+      inputs.forEach(input => { input.value = ""; });
+      updateTotal();
+    }
+
+    function showEventNotification(message) {
+      const notification = document.getElementById("eventNotification");
+      const textEl = document.getElementById("eventText");
+      textEl.textContent = message;
+      notification.style.display = "block";
+      setTimeout(() => { notification.style.display = "none"; }, 3000);
+    }
+
+    function updateTotal() {
+      const inputs = document.querySelectorAll(".bet-input");
+      let total = 0;
+      inputs.forEach(input => { total += parseInt(input.value) || 0; });
+      document.getElementById("totalBet").textContent = total.toLocaleString();
+    }
+
+    function confirmBet() {
+      const inputs = document.querySelectorAll(".bet-input");
+      let values = Array.from(inputs).map(input => parseInt(input.value) || 0);
+      let total = values.reduce((sum, v) => sum + v, 0);
+      if (total !== currentFunds) {
+        const status = document.getElementById("betStatus");
+        status.textContent = `❌ 合計ベット額が所持金（${currentFunds.toLocaleString()}円）と一致していません。`;
+        status.className = "bet-warning";
+        return;
+      }
+      const playerData = {
+        investments: values,
+        ready: true,
+        funds: currentFunds,
+        lastUpdate: Date.now()
+      };
+      socket.emit('player_update', { roomId, playerId, data: playerData });
+      const status = document.getElementById("betStatus");
+      status.textContent = "✅ ベット済みです";
+      status.className = "bet-confirmed";
+    }
+
+    function sendPlayerUpdate() {
+      const playerData = {
+        investments: [0, 0, 0, 0, 0, 0],
+        ready: false,
+        funds: currentFunds,
+        lastUpdate: Date.now()
+      };
+      socket.emit('player_update', { roomId, playerId, data: playerData });
+    }
+
+    document.getElementById("currentFunds").textContent = currentFunds.toLocaleString();
+  </script>
+</body>
+</html>
