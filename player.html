@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>プレイヤー画面</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    .base-return { font-weight: bold; }
+    .bet-input { width: 80px; }
+    #betStatus { font-weight: bold; margin-top: 10px; }
+    .bet-confirmed { color: green; }
+    .bet-warning { color: red; }
+    .player-list { margin-top: 30px; }
+    .connection-status { margin: 10px 0; padding: 10px; border-radius: 5px; }
+    .connected { background: #e6f3ff; color: #0066cc; }
+    .disconnected { background: #ffe6e6; color: #cc0000; }
+    .event-notification { 
+      background: #fff3cd; 
+      border: 1px solid #ffeaa7; 
+      padding: 10px; 
+      margin: 10px 0; 
+      border-radius: 5px;
+      display: none;
+    }
+    .funds-display { 
+      background: #f8f9fa; 
+      padding: 15px; 
+      margin: 15px 0; 
+      border-radius: 5px; 
+      text-align: center; 
+      font-size: 1.2em;
+    }
+    .return-changed { 
+      background: #ffffcc !important; 
+      animation: highlight 2s ease-out;
+    }
+    @keyframes highlight {
+      0% { background: #ffff99 !important; }
+      100% { background: #ffffcc !important; }
+    }
+  </style>
+</head>
+<body>
+  <h2>プレイヤー画面 - 資産シミュレーター</h2>
+
+  <div class="connection-status disconnected" id="connectionStatus">
+    未接続 - ルームに参加してください
+  </div>
+
+  <div class="event-notification" id="eventNotification">
+    <strong>📈 イベント発生！</strong>
+    <span id="eventText"></span>
+  </div>
+
+  <label>ルームID：<input type="text" id="roomIdInput" value="testroom"></label>
+  <label>プレイヤーID：<input type="text" id="playerIdInput" value="player1"></label>
+  <button onclick="joinRoom()">参加</button>
+
+  <div id="gameArea" style="display:none;">
+    <div class="funds-display">
+      所持金：<span id="currentFunds">100,000</span>円
+      <div style="font-size: 0.9em; color: #666; margin-top: 5px;">
+        <span id="fundsChange"></span>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>資産タイプ</th><th>利回り（%）</th><th>ベット額</th></tr>
+      </thead>
+      <tbody id="returnsTable">
+        <tr><td>定期預金</td><td class="base-return">2.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>国債ファンド</td><td class="base-return">3.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>株式インデックス</td><td class="base-return">6.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>ハイテク株</td><td class="base-return">10.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>仮想通貨</td><td class="base-return">30.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+        <tr><td>ベンチャー投資</td><td class="base-return">0.0</td><td><input class="bet-input" type="number" min="0" oninput="updateTotal()"></td></tr>
+      </tbody>
+    </table>
+    
+    <div style="text-align: center; margin: 15px 0;">
+      <strong>合計ベット額：<span id="totalBet">0</span>円</strong>
+    </div>
+    
+    <button onclick="confirmBet()">ベット確定</button>
+    <p id="betStatus"></p>
+
+    <div class="player-list">
+      <h3>ルーム内のプレイヤー一覧</h3>
+      <ul id="playerList"></ul>
+    </div>
+  </div>
+
+  <script>
+    let currentFunds = 100000;
+    let currentReturns = [2, 3, 6, 10, 30, 0];
+    let roomId = "";
+    let playerId = "";
+    let isConnected = false;
+
+    function joinRoom() {
+      roomId = document.getElementById("roomIdInput").value;
+      playerId = document.getElementById("playerIdInput").value;
+      
+      if (!roomId || !playerId) {
+        alert("ルームIDとプレイヤーIDを入力してください");
+        return;
+      }
+
+      // 接続状態を更新
+      isConnected = true;
+      const statusEl = document.getElementById("connectionStatus");
+      statusEl.textContent = `ルーム "${roomId}" に "${playerId}" として参加中`;
+      statusEl.className = "connection-status connected";
+
+      // ゲームエリアを表示
+      document.getElementById("gameArea").style.display = "block";
+
+      // ゲームデータを読み込み
+      loadGameData();
+
+      // プレイヤー情報を保存
+      savePlayerData();
+
+      // 定期的にデータを更新
+      startDataMonitoring();
+    }
+
+    function loadGameData() {
+      const savedData = localStorage.getItem(`room_${roomId}`);
+      if (savedData) {
+        const gameData = JSON.parse(savedData);
+        if (gameData.baseReturns) {
+          updateReturns(gameData.baseReturns);
+        }
+      }
+    }
+
+    function savePlayerData() {
+      const playersData = localStorage.getItem(`room_${roomId}_players`);
+      let players = playersData ? JSON.parse(playersData) : {};
+      
+      players[playerId] = {
+        investments: [0, 0, 0, 0, 0, 0],
+        ready: false,
+        funds: currentFunds,
+        lastUpdate: Date.now()
+      };
+      
+      localStorage.setItem(`room_${roomId}_players`, JSON.stringify(players));
+    }
+
+    function startDataMonitoring() {
+      setInterval(() => {
+        if (!isConnected) return;
+
+        // ゲームデータの変更を監視
+        const savedData = localStorage.getItem(`room_${roomId}`);
+        if (savedData) {
+          const gameData = JSON.parse(savedData);
+          if (gameData.baseReturns) {
+            updateReturns(gameData.baseReturns);
+          }
+        }
+
+        // プレイヤーデータの変更を監視（資産更新など）
+        checkPlayerDataUpdate();
+
+        // プレイヤーリストを更新
+        updatePlayerList();
+      }, 1000);
+    }
+
+    function checkPlayerDataUpdate() {
+      const playersData = localStorage.getItem(`room_${roomId}_players`);
+      if (!playersData) return;
+
+      const players = JSON.parse(playersData);
+      const myData = players[playerId];
+      
+      if (myData && myData.funds !== currentFunds) {
+        // 資産が変更された場合
+        const oldFunds = currentFunds;
+        currentFunds = myData.funds;
+        
+        // 表示を更新
+        document.getElementById("currentFunds").textContent = currentFunds.toLocaleString();
+        
+        // 変化量を表示
+        const changeAmount = currentFunds - oldFunds;
+        const changeEl = document.getElementById("fundsChange");
+        if (changeAmount > 0) {
+          changeEl.textContent = `+${changeAmount.toLocaleString()}円`;
+          changeEl.style.color = "#28a745";
+        } else if (changeAmount < 0) {
+          changeEl.textContent = `${changeAmount.toLocaleString()}円`;
+          changeEl.style.color = "#dc3545";
+        } else {
+          changeEl.textContent = "";
+        }
+        
+        // 資産変更の通知
+        if (currentFunds > oldFunds) {
+          showEventNotification(`💰 資産が増加しました！ ${oldFunds.toLocaleString()}円 → ${currentFunds.toLocaleString()}円`);
+        } else if (currentFunds < oldFunds) {
+          showEventNotification(`📉 資産が減少しました。 ${oldFunds.toLocaleString()}円 → ${currentFunds.toLocaleString()}円`);
+        }
+        
+        // ベット状況をリセット
+        if (!myData.ready) {
+          resetBetInputs();
+          const status = document.getElementById("betStatus");
+          status.textContent = "新しい資産でベットできます";
+          status.className = "";
+        }
+      }
+    }
+
+    function resetBetInputs() {
+      const inputs = document.querySelectorAll(".bet-input");
+      inputs.forEach(input => {
+        input.value = "";
+      });
+      updateTotal();
+    }
+
+    function updateReturns(newReturns) {
+      const cells = document.querySelectorAll(".base-return");
+      let hasChanged = false;
+
+      newReturns.forEach((val, i) => {
+        if (cells[i] && Math.abs(currentReturns[i] - val) > 0.01) {
+          // 変更があった場合、ハイライト
+          cells[i].parentElement.classList.add('return-changed');
+          setTimeout(() => {
+            cells[i].parentElement.classList.remove('return-changed');
+          }, 2000);
+          hasChanged = true;
+        }
+        if (cells[i]) {
+          cells[i].textContent = val.toFixed(1);
+        }
+      });
+
+      // イベント通知を表示
+      if (hasChanged) {
+        showEventNotification("利回りが変更されました！");
+      }
+
+      currentReturns = [...newReturns];
+    }
+
+    function showEventNotification(message) {
+      const notification = document.getElementById("eventNotification");
+      const textEl = document.getElementById("eventText");
+      textEl.textContent = message;
+      notification.style.display = "block";
+      
+      setTimeout(() => {
+        notification.style.display = "none";
+      }, 3000);
+    }
+
+    function updatePlayerList() {
+      const playersData = localStorage.getItem(`room_${roomId}_players`);
+      if (!playersData) return;
+
+      const players = JSON.parse(playersData);
+      const list = document.getElementById("playerList");
+      list.innerHTML = "";
+
+      Object.entries(players).forEach(([id, data]) => {
+        const li = document.createElement("li");
+        const total = (data.investments || []).reduce((sum, v) => sum + v, 0);
+        const status = data.ready ? "✅ ベット済み" : "⏳ ベット待ち";
+        li.textContent = `${id}：${total.toLocaleString()}円 ${status}`;
+        list.appendChild(li);
+      });
+    }
+
+    function updateTotal() {
+      const inputs = document.querySelectorAll(".bet-input");
+      let total = 0;
+      inputs.forEach(input => {
+        total += parseInt(input.value) || 0;
+      });
+      document.getElementById("totalBet").textContent = total.toLocaleString();
+    }
+
+    function confirmBet() {
+      const inputs = document.querySelectorAll(".bet-input");
+      let values = Array.from(inputs).map(input => parseInt(input.value) || 0);
+      let total = values.reduce((sum, v) => sum + v, 0);
+
+      if (total !== currentFunds) {
+        const status = document.getElementById("betStatus");
+        status.textContent = `❌ 合計ベット額が所持金（${currentFunds.toLocaleString()}円）と一致していません。`;
+        status.className = "bet-warning";
+        return;
+      }
+
+      // プレイヤーデータを更新
+      const playersData = localStorage.getItem(`room_${roomId}_players`);
+      let players = playersData ? JSON.parse(playersData) : {};
+      
+      players[playerId] = {
+        investments: values,
+        ready: true,
+        funds: currentFunds,
+        lastUpdate: Date.now()
+      };
+      
+      localStorage.setItem(`room_${roomId}_players`, JSON.stringify(players));
+
+      const status = document.getElementById("betStatus");
+      status.textContent = "✅ ベット済みです";
+      status.className = "bet-confirmed";
+    }
+
+    // 初期表示
+    document.getElementById("currentFunds").textContent = currentFunds.toLocaleString();
+  </script>
+</body>
+</html>
